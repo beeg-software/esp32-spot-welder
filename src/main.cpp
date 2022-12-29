@@ -4,26 +4,26 @@
 #include <Adafruit_SH110X.h>
 
 
-// FREERTOS
+// FreeRTOS Configuration
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
 #else
 #define ARDUINO_RUNNING_CORE 1
 #endif
 
-// OLED PINS
+// Define OLED Pins
 #define OLED_MOSI     23
 #define OLED_CLK      18
 #define OLED_DC       4
 #define OLED_CS       5
 #define OLED_RST      2
 
-// ROTARTY ENCODER PINS
-#define ENCODER_A 3
-#define ENCODER_B 1
+// Define rotary encoder pins
+#define ENCODER_A 19
+#define ENCODER_B 21
 #define ENCODER_BTN 22
 
-// SPOT WELDER
+// Define spot welder specific constants and pins
 #define RELAY_PIN 13
 #define COMMAND_PIN 27
 #define MIN_VALUE 10
@@ -31,120 +31,139 @@
 #define ADVANCE 5
 
 
-// FREERTOS Functions
+// Declare FreeRTOS task functions and handlers
 void TaskImpulse( void *pvParameters );
+TaskHandle_t TaskImpulseHandle;
 void TaskDrawMenu( void *pvParameters );
+TaskHandle_t TaskDrawMenuHandle;
 void TaskSerialCommands( void *pvParameters );
+TaskHandle_t TaskSerialCommandsHandle;
 void TaskEncoder( void *pvParameters );
+TaskHandle_t TaskEncoderHandle;
 
-void PreCalcTiming();
+// Declare normal functions
+void preCalcTiming();
+void serialFlush();
 
+// System status variables
+String status = "BOOTING";
 
-// SPOT WELDER VARIABLES
+// Spot welder specific variables
 String valuesNames[3] = {"Pre-impulso", "Pausa", "Impulso"};
 int values[3] = {30, 10, 130};
 int timings[3] = {25, 5, 125};
-String status = "BOOTING";
 
-// MENU VARIABLES
+// Menu variables
 int selectedValue = 0;
 bool editing = false;
 
-// ENCODER VARIABLES
+// Encoder variables
 int encoderPos = 0;
 int lastEncA = LOW;
 int lastEncB = LOW;
 
-
-// Create the OLED display
+// Create the OLED display object
 Adafruit_SH1106G display = Adafruit_SH1106G(128, 64,OLED_MOSI, OLED_CLK, OLED_DC, OLED_RST, OLED_CS);
 
 void setup() {
   // Start Serial
   Serial.begin(9600);
 
+  //Starting the four main tasks
   xTaskCreatePinnedToCore(
     TaskImpulse
-    ,  "TaskImpulse"   // A name just for humans
+    ,  "TaskImpulse"
     ,  2048  // This stack size can be checked & adjusted by reading the Stack Highwater
     ,  NULL
     ,  3  // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
-    ,  NULL 
+    ,  &TaskImpulseHandle 
     ,  ARDUINO_RUNNING_CORE);
 
   xTaskCreatePinnedToCore(
     TaskDrawMenu
-    ,  "TaskDrawMenu"   // A name just for humans
-    ,  2048  // This stack size can be checked & adjusted by reading the Stack Highwater
+    ,  "TaskDrawMenu"
+    ,  2048
     ,  NULL
-    ,  2  // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
-    ,  NULL 
+    ,  2
+    ,  &TaskDrawMenuHandle 
     ,  ARDUINO_RUNNING_CORE);
 
   xTaskCreatePinnedToCore(
     TaskSerialCommands
-    ,  "TaskSerialCommands"   // A name just for humans
-    ,  2048  // This stack size can be checked & adjusted by reading the Stack Highwater
+    ,  "TaskSerialCommands"
+    ,  2048
     ,  NULL
-    ,  1  // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
-    ,  NULL 
+    ,  1
+    ,  &TaskSerialCommandsHandle 
     ,  ARDUINO_RUNNING_CORE);
 
   xTaskCreatePinnedToCore(
     TaskEncoder
-    ,  "TaskEncoder"   // A name just for humans
-    ,  2048  // This stack size can be checked & adjusted by reading the Stack Highwater
+    ,  "TaskEncoder"
+    ,  2048
     ,  NULL
-    ,  1  // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
-    ,  NULL 
+    ,  1
+    ,  &TaskEncoderHandle 
     ,  ARDUINO_RUNNING_CORE);
 }
 
+// Empty main loop because... FreeRTOS
 void loop() {
 }
 
-void TaskImpulse(void *pvParameters)  // This is a task.
+// The task to handle the actual zapping
+void TaskImpulse(void *pvParameters)
 {
   (void) pvParameters;
 
+  // Wait one second to be sure everything is ready to be started
   vTaskDelay(1000 / portTICK_PERIOD_MS );
-  pinMode(RELAY_PIN, OUTPUT);
-  pinMode(COMMAND_PIN, INPUT);
-  status = "READY";
 
-  unsigned long mls = 0;
-  int commandStatus = 0;
+  // Check for strange bootup statuses and stop everything if needed
+  if(status != "BOOTING") {
+    vTaskDelete(TaskImpulseHandle);
+    status == "ERROR";
+  } else {
+    // Enable Relay pin output
+    pinMode(RELAY_PIN, OUTPUT);
+  }
 
+  // Infinite task loop
   for (;;) {
-    // commandStatus = digitalRead(COMMAND_PIN);
-
-    // if(commandStatus == HIGH)
-    // {
+    // Check if we're entering for the first time
+    if(status == "BOOTING") {
+      // Everything ready, suspend the task to wait for a zapp command
+      status = "READY";
+      vTaskSuspend(TaskImpulseHandle);
+      status == "ERROR";
+    } else if(status == "READY") {
+      // This is a real zapp command, pre-calculate timing values
+      preCalcTiming();
       status = "ZAPP";
-      //Pre-impulse
+      //Pre-impulse routine
       digitalWrite(RELAY_PIN, HIGH);
       vTaskDelay(timings[0] / portTICK_PERIOD_MS );
       digitalWrite(RELAY_PIN, LOW);
       vTaskDelay(ADVANCE / portTICK_PERIOD_MS );
 
-      //Pause
+      //Pause routine (can be simplified and merged up or down, keep for now)
       vTaskDelay(timings[1] / portTICK_PERIOD_MS );
       vTaskDelay(ADVANCE / portTICK_PERIOD_MS );
 
-      //Impulse
+      //Impulse routine
       digitalWrite(RELAY_PIN, HIGH);
       vTaskDelay(timings[2] / portTICK_PERIOD_MS );
       digitalWrite(RELAY_PIN, LOW);
       vTaskDelay(ADVANCE / portTICK_PERIOD_MS );
 
+      // Wait 5 seconds of cool-down (to avoid multiple firings and real overheating)
       status = "COOLING";
       vTaskDelay(5000 / portTICK_PERIOD_MS );
-    //   //while(digitalRead(COMMAND_PIN))
-    //   //{
-    //     vTaskDelay(500 / portTICK_PERIOD_MS );
-    //   //}
       status = "READY";
-    // }
+
+      // Goodnight, see you next zapp
+      vTaskSuspend(TaskImpulseHandle);
+    }
   }
 }
 
@@ -238,22 +257,27 @@ void TaskSerialCommands(void *pvParameters)  // This is a task.
       if (val == 'i') {
         values[selectedValue] += 10;
         values[selectedValue] = constrain(values[selectedValue], MIN_VALUE, MAX_VALUE);
-        PreCalcTiming();
       }
       // se il valore è "d", decrementa il valore selezionato di 10
       if (val == 'd') {
         values[selectedValue] -= 10;
         values[selectedValue] = constrain(values[selectedValue], MIN_VALUE, MAX_VALUE);
-        PreCalcTiming();
       }
+      if (val == '!') {
+        vTaskResume(TaskImpulseHandle);
+      }
+      serialFlush();
     }
   }
 }
 
-void TaskEncoder(void *pvParameters)  // This is a task.
+// Task to handle the menu navigation using the encoder
+void TaskEncoder(void *pvParameters)
 {
   (void) pvParameters;
+  pinMode(COMMAND_PIN, INPUT);
 
+  // Infinite task loop
   for (;;) {
     // leggi l'input dell'encoder
     int encA = digitalRead(ENCODER_A);
@@ -278,7 +302,6 @@ void TaskEncoder(void *pvParameters)  // This is a task.
         // aggiorna il valore selezionato in base alla posizione dell'encoder
         values[selectedValue] += encoderPos;
         values[selectedValue] = constrain(values[selectedValue], MIN_VALUE, MAX_VALUE);
-        PreCalcTiming();
         encoderPos = 0;
       }
     }
@@ -303,8 +326,19 @@ void TaskEncoder(void *pvParameters)  // This is a task.
   }
 }
 
-void PreCalcTiming() {
+// Function to pre-calculate timings from current values and default
+// advance to switch the relaypin in time for the next 0-crossing of the
+// mains voltage
+void preCalcTiming() {
   timings[0] = values[0] - ADVANCE;
   timings[1] = values[1] - ADVANCE;
   timings[2] = values[2] - ADVANCE;
+}
+
+// Function to flush serial buffer
+void serialFlush(){
+  char t = 0;
+  while(Serial.available() > 0) {
+    t = Serial.read();
+  }
 }
