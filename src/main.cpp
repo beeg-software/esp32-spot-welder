@@ -44,6 +44,10 @@ TaskHandle_t TaskEncoderHandle;
 // Declare normal functions
 void preCalcTiming();
 void serialFlush();
+void menuLineOLED(int lineNum);
+void printMenuLineOLED(String name, String value = "", bool selected = false, bool editMode = false);
+void printOLED(String toPrint, bool inverted = false);
+void printlnOLED(String toPrint, bool inverted = false);
 
 // System status variables
 String status = "BOOTING";
@@ -56,6 +60,7 @@ int timings[3] = {25, 5, 125};
 // Menu variables
 int selectedValue = 0;
 bool editing = false;
+bool menuBlinkState = false;
 
 // Encoder variables
 int encoderPos = 0;
@@ -177,7 +182,16 @@ void TaskDrawMenu(void *pvParameters)  // This is a task.
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
 
+  TickType_t previousMenuTick;
+  TickType_t currentMenuTick;
+  previousMenuTick = xTaskGetTickCount();
+
   for (;;) {
+    currentMenuTick = xTaskGetTickCount();
+    if(currentMenuTick - previousMenuTick >= 750 / portTICK_PERIOD_MS) {
+        menuBlinkState = !menuBlinkState;
+        previousMenuTick = currentMenuTick;
+    }
     // 25-ish FPS screen update
     vTaskDelay(40 / portTICK_PERIOD_MS );
 
@@ -185,57 +199,18 @@ void TaskDrawMenu(void *pvParameters)  // This is a task.
     display.setCursor(0,0);
 
     // Header
-    display.print("SPOT WELDER ");
-    display.println(status);
-    display.println("");
+    printlnOLED("SPOT WELDER " + status);
+    printlnOLED("");
 
     // Pre-impulse entry
-    if (selectedValue == 0) {
-      display.setTextColor(SH110X_BLACK, SH110X_WHITE);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.print(" ");
-    display.print(valuesNames[0]);
-    display.print(": ");
-    if (selectedValue == 0 && editing) {
-      display.setTextColor(SH110X_BLACK, SH110X_WHITE);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.println(values[0]);
+    menuLineOLED(0);
 
     // Pause entry
-    if (selectedValue == 1) {
-      display.setTextColor(SH110X_BLACK, SH110X_WHITE);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.print(" ");
-    display.print(valuesNames[1]);
-    display.print(": ");
-    if (selectedValue == 1 && editing) {
-      display.setTextColor(SH110X_BLACK, SH110X_WHITE);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.println(values[1]);
+    menuLineOLED(1);
 
     // Impulse entry
-    if (selectedValue == 2) {
-      display.setTextColor(SH110X_BLACK, SH110X_WHITE);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.print(" ");
-    display.print(valuesNames[2]);
-    display.print(": ");
-    if (selectedValue == 2 && editing) {
-      display.setTextColor(SH110X_BLACK, SH110X_WHITE);
-    } else {
-      display.setTextColor(SH110X_WHITE);
-    }
-    display.println(values[2]);
+    menuLineOLED(2);
+
     display.display();
   }
 }
@@ -252,6 +227,7 @@ void TaskSerialCommands(void *pvParameters)  // This is a task.
       // se il valore è un numero da 1 a 3, seleziona il valore corrispondente
       if (val >= '1' && val <= '3') {
         selectedValue = val - '1';
+        editing = false;
       }
       // se il valore è "u", incrementa il valore selezionato di 10
       if (val == 'i') {
@@ -262,6 +238,9 @@ void TaskSerialCommands(void *pvParameters)  // This is a task.
       if (val == 'd') {
         values[selectedValue] -= 10;
         values[selectedValue] = constrain(values[selectedValue], MIN_VALUE, MAX_VALUE);
+      }
+      if (val == 'e') {
+        editing = !editing;
       }
       if (val == '!') {
         vTaskResume(TaskImpulseHandle);
@@ -336,9 +315,59 @@ void preCalcTiming() {
 }
 
 // Function to flush serial buffer
-void serialFlush(){
+void serialFlush() {
   char t = 0;
   while(Serial.available() > 0) {
     t = Serial.read();
   }
+}
+
+// Function to handle a the printing process of a single line of the menu
+void menuLineOLED(int lineNum) {
+  if(lineNum == selectedValue) {
+    if(editing && menuBlinkState) {
+      printMenuLineOLED(valuesNames[lineNum], (String)values[lineNum], true, true);
+    } else {
+      printMenuLineOLED(valuesNames[lineNum], (String)values[lineNum], true, false);
+    }
+  } else {
+    printMenuLineOLED(valuesNames[lineNum], (String)values[lineNum], false, false);
+  }
+}
+
+// Function to assemble and print a single line of the menu
+void printMenuLineOLED(String name, String value, bool selected, bool editMode) {
+    if (selected) {
+      printOLED(" " + name + ":", true);
+    } else {
+      printOLED(" " + name + ":");
+    }
+
+    printOLED(" ");
+
+    if (selected && editMode) {
+      printlnOLED(value, true);
+    } else {
+      printlnOLED(value);
+    }
+}
+
+// Function to print string on OLED without minding changing colors
+void printOLED(String toPrint, bool inverted) {
+  if(inverted) {
+    display.setTextColor(SH110X_BLACK, SH110X_WHITE);
+  } else {
+    display.setTextColor(SH110X_WHITE);
+  }
+  display.print(toPrint);
+}
+
+// Function to print string on OLED without minding changing colors (new line)
+void printlnOLED(String toPrint, bool inverted) {
+  if(inverted) {
+    display.setTextColor(SH110X_BLACK, SH110X_WHITE);
+  } else {
+    display.setTextColor(SH110X_WHITE);
+  }
+  display.println(toPrint);
 }
