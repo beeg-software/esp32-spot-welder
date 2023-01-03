@@ -258,14 +258,31 @@ void TaskEncoder(void *pvParameters)
 
   // Infinite task loop
   for (;;) {
+    int commandBtn = digitalRead(COMMAND_PIN);
+
     // leggi l'input dell'encoder
     int encA = digitalRead(ENCODER_A);
     int encB = digitalRead(ENCODER_B);
     int encBtn = digitalRead(ENCODER_BTN);
 
     // se il pulsante dell'encoder viene premuto, cambia lo stato di editing
+    if (commandBtn == HIGH) {
+      vTaskResume(TaskImpulseHandle);
+      while (commandBtn == HIGH)
+      {
+        commandBtn = digitalRead(COMMAND_PIN);
+        vTaskDelay(100 / portTICK_PERIOD_MS );
+      }
+    }
+
+    // se il pulsante dell'encoder viene premuto, cambia lo stato di editing
     if (encBtn == HIGH) {
       editing = !editing;
+      while (encBtn == HIGH)
+      {
+        encBtn = digitalRead(ENCODER_BTN);
+        vTaskDelay(100 / portTICK_PERIOD_MS );
+      }
     }
 
     // se si è in modalità di editing, utilizza l'encoder per modificare il valore selezionato
